@@ -499,7 +499,7 @@ class NovaViewModel(private val context: Context) : ViewModel() {
                     onDispose { bars?.show(WindowInsetsCompat.Type.systemBars()) }
                 }
                 Box(Modifier.fillMaxSize().background(Color.Black)) {
-                    AndroidView(factory = { ctx -> PlayerView(ctx).apply { this.player = player; useController = true } }, modifier = Modifier.fillMaxSize())
+                    AndroidView(factory = { ctx -> PlayerView(ctx).apply { this.player = player; useController = true; keepScreenOn = true } }, modifier = Modifier.fillMaxSize())
                     IconButton(onClick = { fullScreen = false }, modifier = Modifier.align(Alignment.TopEnd).padding(16.dp).background(Color(0x99000000), RoundedCornerShape(50))) {
                     Icon(Icons.Default.FullscreenExit, stringResource(R.string.exit_fullscreen), tint = Color.White)
                     }
@@ -507,7 +507,7 @@ class NovaViewModel(private val context: Context) : ViewModel() {
             }
         } else {
             Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Color.Black, RoundedCornerShape(18.dp))) {
-                AndroidView(factory = { ctx -> PlayerView(ctx).apply { this.player = player; useController = true } }, modifier = Modifier.fillMaxSize())
+                AndroidView(factory = { ctx -> PlayerView(ctx).apply { this.player = player; useController = true; keepScreenOn = true } }, modifier = Modifier.fillMaxSize())
                 IconButton(onClick = { fullScreen = true }, modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).background(Color(0x99000000), RoundedCornerShape(50))) {
                     Icon(Icons.Default.Fullscreen, stringResource(R.string.fullscreen), tint = Color.White)
                 }
