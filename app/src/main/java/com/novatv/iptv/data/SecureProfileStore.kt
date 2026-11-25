@@ -23,9 +23,9 @@ class SecureProfileStore(context: Context) {
         prefs.edit().putString(storageKey(profile.name), encrypt(payload)).apply()
     }
 
-    fun savePlaylistUrl(url: String) {
-        runCatching { encrypt(url) }.getOrNull()?.let { prefs.edit().putString(PLAYLIST_KEY, it).apply() }
-    }
+    fun savePlaylistUrl(url: String): Boolean = runCatching {
+        prefs.edit().putString(PLAYLIST_KEY, encrypt(url)).commit()
+    }.getOrDefault(false)
     fun playlistUrl(): String? = runCatching { prefs.getString(PLAYLIST_KEY, null)?.let(::decryptText) }.getOrNull()
 
     fun profiles(): List<XtreamProfile> = prefs.all.keys.filter { it.startsWith(PREFIX) }

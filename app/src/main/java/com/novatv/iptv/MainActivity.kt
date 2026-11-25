@@ -24,8 +24,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.ui.text.input.ImeAction
@@ -38,6 +42,8 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import com.novatv.iptv.data.Channel
 import com.novatv.iptv.data.EpgProgram
 import com.novatv.iptv.data.M3uParser
@@ -138,6 +144,16 @@ class NovaViewModel(private val context: Context) : ViewModel() {
         }
     }
     fun selectCatalog(kind: String) { catalog = kind; channels = catalogItems.filter { it.kind == kind }; category = "Todos" }
+    fun savePlaylistUrl(url: String) {
+        val value = url.trim()
+        if (!value.startsWith("https://", true) && !value.startsWith("http://", true)) {
+            error = "Introduce una dirección HTTP o HTTPS antes de guardar."; return
+        }
+        if (profileStore.savePlaylistUrl(value)) {
+            savedPlaylistUrl = value
+            error = null
+        } else error = "No se pudo guardar la dirección en este dispositivo."
+    }
     fun loadUrl(url: String) {
         if (!url.startsWith("https://", true) && !url.startsWith("http://", true)) { error = "Introduce una URL HTTP o HTTPS válida."; return }
         viewModelScope.launch {
@@ -151,7 +167,7 @@ class NovaViewModel(private val context: Context) : ViewModel() {
                 }
                 if (load(body)) {
                     savedPlaylistUrl = url
-                    profileStore.savePlaylistUrl(url)
+                    if (!profileStore.savePlaylistUrl(url)) error = "Lista cargada, pero no se pudo guardar la dirección."
                 }
             } catch (e: Exception) { error = "No se pudo cargar la lista: ${e.message ?: "error de conexión"}" }
             finally { loading = false }
@@ -237,8 +253,15 @@ class NovaViewModel(private val context: Context) : ViewModel() {
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done, autoCorrectEnabled = false),
                         keyboardActions = KeyboardActions(onDone = { vm.loadUrl(playlistUrl.trim()) }),
-                        trailingIcon = { TextButton(enabled = !vm.loading && playlistUrl.isNotBlank(), onClick = { vm.loadUrl(playlistUrl.trim()) }) { Text(if (vm.loading) "Cargando…" else "Cargar") } },
                     )
+                    Row(Modifier.fillMaxWidth().padding(bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedButton(enabled = playlistUrl.isNotBlank(), onClick = { vm.savePlaylistUrl(playlistUrl) }, modifier = Modifier.weight(1f)) {
+                            Text(if (vm.savedPlaylistUrl == playlistUrl.trim() && playlistUrl.isNotBlank()) "Lista guardada ✓" else "Guardar lista")
+                        }
+                        Button(enabled = !vm.loading && playlistUrl.isNotBlank(), onClick = { vm.loadUrl(playlistUrl.trim()) }, modifier = Modifier.weight(1f)) {
+                            Text(if (vm.loading) "Cargando…" else "Cargar lista")
+                        }
+                    }
                     if (vm.channels.isEmpty()) {
                         EmptyState { picker.launch(arrayOf("*/*")) }
                     } else {
@@ -306,6 +329,7 @@ class NovaViewModel(private val context: Context) : ViewModel() {
 @Composable private fun Player(channel: Channel) {
     val context = LocalContext.current
     var playbackError by remember(channel.url) { mutableStateOf<String?>(null) }
+    var fullScreen by remember(channel.url) { mutableStateOf(false) }
     val initResult = remember(channel.url) {
         try {
             val instance = ExoPlayer.Builder(context.applicationContext).build()
@@ -331,7 +355,31 @@ class NovaViewModel(private val context: Context) : ViewModel() {
             player.addListener(listener)
             onDispose { player.removeListener(listener); player.release() }
         }
-        AndroidView(factory = { ctx -> PlayerView(ctx).apply { this.player = player; useController = true } }, modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Color.Black, RoundedCornerShape(18.dp)))
+        if (fullScreen) {
+            Dialog(onDismissRequest = { fullScreen = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+                val dialogView = LocalView.current
+                val dialogWindow = (dialogView.parent as? DialogWindowProvider)?.window
+                DisposableEffect(dialogWindow) {
+                    val bars = dialogWindow?.let { WindowInsetsControllerCompat(it, it.decorView) }
+                    bars?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                    bars?.hide(WindowInsetsCompat.Type.systemBars())
+                    onDispose { bars?.show(WindowInsetsCompat.Type.systemBars()) }
+                }
+                Box(Modifier.fillMaxSize().background(Color.Black)) {
+                    AndroidView(factory = { ctx -> PlayerView(ctx).apply { this.player = player; useController = true } }, modifier = Modifier.fillMaxSize())
+                    IconButton(onClick = { fullScreen = false }, modifier = Modifier.align(Alignment.TopEnd).padding(16.dp).background(Color(0x99000000), RoundedCornerShape(50))) {
+                        Icon(Icons.Default.FullscreenExit, "Salir de pantalla completa", tint = Color.White)
+                    }
+                }
+            }
+        } else {
+            Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Color.Black, RoundedCornerShape(18.dp))) {
+                AndroidView(factory = { ctx -> PlayerView(ctx).apply { this.player = player; useController = true } }, modifier = Modifier.fillMaxSize())
+                IconButton(onClick = { fullScreen = true }, modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).background(Color(0x99000000), RoundedCornerShape(50))) {
+                    Icon(Icons.Default.Fullscreen, "Pantalla completa", tint = Color.White)
+                }
+            }
+        }
         playbackError?.let { Text(it, color = Color(0xFFFF9B9B), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 8.dp)) }
     }
 }
