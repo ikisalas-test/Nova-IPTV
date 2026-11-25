@@ -3,6 +3,7 @@ package com.novatv.iptv
 import android.content.Context
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -300,11 +301,21 @@ class NovaViewModel(private val context: Context) : ViewModel() {
 @Composable private fun Player(channel: Channel) {
     val context = LocalContext.current
     var playbackError by remember(channel.url) { mutableStateOf<String?>(null) }
-    val player = remember(channel.url) {
-        runCatching { ExoPlayer.Builder(context).build().apply { setMediaItem(MediaItem.fromUri(channel.url)); prepare(); playWhenReady = true } }.getOrNull()
+    val initResult = remember(channel.url) {
+        try {
+            val instance = ExoPlayer.Builder(context.applicationContext).build()
+            instance.setMediaItem(MediaItem.fromUri(channel.url))
+            instance.prepare()
+            instance.playWhenReady = true
+            instance to null
+        } catch (exception: Exception) {
+            Log.e("NovaIPTV", "ExoPlayer initialization failed", exception)
+            null to "${exception.javaClass.simpleName}: ${exception.localizedMessage ?: "sin detalle"}"
+        }
     }
+    val player = initResult.first
     if (player == null) {
-        Text("No se pudo iniciar el reproductor. Comprueba que la dirección del canal sea válida.", color = Color(0xFFFF9B9B), modifier = Modifier.padding(16.dp))
+        Text("No se pudo iniciar el reproductor. ${initResult.second.orEmpty()}", color = Color(0xFFFF9B9B), modifier = Modifier.padding(16.dp))
     } else {
         DisposableEffect(player) {
             val listener = object : androidx.media3.common.Player.Listener {
