@@ -14,10 +14,10 @@ data class Channel(
 data class EpgProgram(val title: String, val start: String, val end: String, val description: String)
 
 object M3uParser {
-    fun parse(text: String): List<Channel> {
+    fun parse(text: String, uncategorized: String = "Sin categoría", untitled: String = "Canal sin nombre"): List<Channel> {
         val result = mutableListOf<Channel>()
         var title: String? = null
-        var group = "Sin categoría"
+        var group = uncategorized
         var logo: String? = null
         var epgId: String? = null
         text.lineSequence().forEach { raw ->
@@ -26,14 +26,14 @@ object M3uParser {
                 line.startsWith("#EXTINF", ignoreCase = true) -> {
                     val attrs = Regex("([\\w-]+)=\\\"([^\\\"]*)\\\"").findAll(line)
                         .associate { it.groupValues[1].lowercase() to it.groupValues[2] }
-                    title = line.substringAfter(',', line).trim().ifBlank { "Canal sin nombre" }
-                    group = attrs["group-title"]?.takeIf(String::isNotBlank) ?: "Sin categoría"
+                    title = line.substringAfter(',', line).trim().ifBlank { untitled }
+                    group = attrs["group-title"]?.takeIf(String::isNotBlank) ?: uncategorized
                     logo = attrs["tvg-logo"]?.takeIf(String::isNotBlank)
                     epgId = attrs["tvg-id"]?.takeIf(String::isNotBlank)
                 }
                 line.isNotEmpty() && !line.startsWith("#") && title != null -> {
                     result += Channel(title!!, line, group, logo, epgId = epgId)
-                    title = null; group = "Sin categoría"; logo = null; epgId = null
+                    title = null; group = uncategorized; logo = null; epgId = null
                 }
             }
         }

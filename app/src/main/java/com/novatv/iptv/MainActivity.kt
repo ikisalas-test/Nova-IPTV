@@ -25,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -50,6 +51,7 @@ import com.novatv.iptv.data.M3uParser
 import com.novatv.iptv.data.SecureProfileStore
 import com.novatv.iptv.data.XtreamClient
 import com.novatv.iptv.data.XtreamProfile
+import com.novatv.iptv.data.XtreamLabels
 import com.novatv.iptv.data.XmlTvParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -61,6 +63,7 @@ import java.security.MessageDigest
 private val Ink = Color(0xFF090B12)
 private val Panel = Color(0xFF151925)
 private val Violet = Color(0xFF9B8CFF)
+private const val ALL_CATEGORIES = "__nova_all_categories__"
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -75,7 +78,7 @@ class NovaViewModel(private val context: Context) : ViewModel() {
     var selected by mutableStateOf<Channel?>(null); private set
     var error by mutableStateOf<String?>(null); private set
     var loading by mutableStateOf(false); private set
-    var category by mutableStateOf("Todos")
+    var category by mutableStateOf(ALL_CATEGORIES)
     var favoritesOnly by mutableStateOf(false)
     var favorites by mutableStateOf<Set<String>>(emptySet()); private set
     var history by mutableStateOf<List<String>>(emptyList()); private set
@@ -94,17 +97,17 @@ class NovaViewModel(private val context: Context) : ViewModel() {
         if (savedPlaylistUrl.isNotBlank()) loadUrl(savedPlaylistUrl)
     }
     fun load(text: String): Boolean {
-        val parsed = M3uParser.parse(text)
-        if (parsed.isEmpty()) { error = "No encontramos canales. Comprueba que el archivo sea una lista M3U válida."; return false }
-        channels = parsed; catalogItems = parsed; catalog = "live"; selected = null; category = "Todos"; error = null
+        val parsed = M3uParser.parse(text, context.getString(R.string.uncategorized), context.getString(R.string.channel_untitled))
+        if (parsed.isEmpty()) { error = context.getString(R.string.error_invalid_m3u); return false }
+        channels = parsed; catalogItems = parsed; catalog = "live"; selected = null; category = ALL_CATEGORIES; error = null
         return true
     }
     fun loadXmlTv(text: String) {
         try {
             val parsed = XmlTvParser.parse(text)
-            if (parsed.isEmpty()) error = "El archivo XMLTV no contiene emisiones reconocibles."
+            if (parsed.isEmpty()) error = context.getString(R.string.error_empty_xmltv)
             else { xmltv = parsed; error = null }
-        } catch (e: Exception) { error = "No se pudo analizar el EPG: ${e.message ?: "XML inválido"}" }
+        } catch (e: Exception) { error = context.getString(R.string.error_parse_epg, e.message ?: context.getString(R.string.error_invalid_xml)) }
     }
     fun reportError(message: String) { error = message }
     fun deleteProfile(name: String) {
@@ -115,47 +118,47 @@ class NovaViewModel(private val context: Context) : ViewModel() {
         viewModelScope.launch {
             loading = true; error = null
             try {
-                val profile = XtreamProfile(name.trim().ifBlank { "Mi perfil" }, server.trim().trimEnd('/'), username.trim(), password)
+                val profile = XtreamProfile(name.trim().ifBlank { context.getString(R.string.profile_default) }, server.trim().trimEnd('/'), username.trim(), password)
                 val lists = withContext(Dispatchers.IO) {
-                    val client = XtreamClient(profile.server, profile.username, profile.password)
+                    val client = xtreamClient(profile)
                     client.list("live") + client.list("movies") + client.list("series")
                 }
-                if (lists.isEmpty()) error = "El proveedor no devolvió canales ni contenidos. Revisa servidor y acceso."
+                if (lists.isEmpty()) error = context.getString(R.string.error_empty_provider)
                 else {
                     profileStore.save(profile)
                     savedProfiles = profileStore.profiles()
                     activeProfileName = profile.name
-                    catalogItems = lists; channels = lists; catalog = "live"; category = "Todos"
+                    catalogItems = lists; channels = lists; catalog = "live"; category = ALL_CATEGORIES
                 }
-            } catch (e: Exception) { error = "No se pudo conectar con el proveedor: ${e.message ?: "error de conexión"}" }
+            } catch (e: Exception) { error = context.getString(R.string.error_connect_provider, e.message ?: context.getString(R.string.error_connection)) }
             finally { loading = false }
         }
     }
     fun loadEpisodes(series: Channel) {
-        val profile = activeProfileName?.let(profileStore::load) ?: run { error = "Selecciona un perfil Xtream para ver episodios."; return }
+        val profile = activeProfileName?.let(profileStore::load) ?: run { error = context.getString(R.string.error_select_profile); return }
         viewModelScope.launch {
             loading = true
             try {
-                val episodes = withContext(Dispatchers.IO) { XtreamClient(profile.server, profile.username, profile.password).episodes(series.sourceId ?: return@withContext emptyList()) }
-                if (episodes.isEmpty()) error = "No hay episodios disponibles para esta serie."
-                else { channels = episodes; catalog = "episode"; category = "Todos" }
-            } catch (e: Exception) { error = "No se pudieron cargar los episodios: ${e.message ?: "error"}" }
+                val episodes = withContext(Dispatchers.IO) { xtreamClient(profile).episodes(series.sourceId ?: return@withContext emptyList()) }
+                if (episodes.isEmpty()) error = context.getString(R.string.error_no_episodes)
+                else { channels = episodes; catalog = "episode"; category = ALL_CATEGORIES }
+            } catch (e: Exception) { error = context.getString(R.string.error_load_episodes, e.message ?: context.getString(R.string.error_connection)) }
             finally { loading = false }
         }
     }
-    fun selectCatalog(kind: String) { catalog = kind; channels = catalogItems.filter { it.kind == kind }; category = "Todos" }
+    fun selectCatalog(kind: String) { catalog = kind; channels = catalogItems.filter { it.kind == kind }; category = ALL_CATEGORIES }
     fun savePlaylistUrl(url: String) {
         val value = url.trim()
         if (!value.startsWith("https://", true) && !value.startsWith("http://", true)) {
-            error = "Introduce una dirección HTTP o HTTPS antes de guardar."; return
+            error = context.getString(R.string.error_invalid_url_save); return
         }
         if (profileStore.savePlaylistUrl(value)) {
             savedPlaylistUrl = value
             error = null
-        } else error = "No se pudo guardar la dirección en este dispositivo."
+        } else error = context.getString(R.string.error_save_url)
     }
     fun loadUrl(url: String) {
-        if (!url.startsWith("https://", true) && !url.startsWith("http://", true)) { error = "Introduce una URL HTTP o HTTPS válida."; return }
+        if (!url.startsWith("https://", true) && !url.startsWith("http://", true)) { error = context.getString(R.string.error_invalid_url); return }
         viewModelScope.launch {
             loading = true; error = null
             try {
@@ -167,9 +170,9 @@ class NovaViewModel(private val context: Context) : ViewModel() {
                 }
                 if (load(body)) {
                     savedPlaylistUrl = url
-                    if (!profileStore.savePlaylistUrl(url)) error = "Lista cargada, pero no se pudo guardar la dirección."
+                    if (!profileStore.savePlaylistUrl(url)) error = context.getString(R.string.error_loaded_not_saved)
                 }
-            } catch (e: Exception) { error = "No se pudo cargar la lista: ${e.message ?: "error de conexión"}" }
+            } catch (e: Exception) { error = context.getString(R.string.error_load_list, e.message ?: context.getString(R.string.error_connection)) }
             finally { loading = false }
         }
     }
@@ -178,7 +181,7 @@ class NovaViewModel(private val context: Context) : ViewModel() {
         epg = emptyList()
         if (channel.kind == "live" && channel.sourceId != null) {
             activeProfileName?.let(profileStore::load)?.let { profile -> viewModelScope.launch {
-                epg = withContext(Dispatchers.IO) { XtreamClient(profile.server, profile.username, profile.password).epg(channel.sourceId) }
+                epg = withContext(Dispatchers.IO) { xtreamClient(profile).epg(channel.sourceId) }
             } }
         }
         history = (listOf(channel.name) + history.filterNot { it == channel.name }).take(30)
@@ -191,7 +194,18 @@ class NovaViewModel(private val context: Context) : ViewModel() {
     }
     fun stop() { selected = null }
     fun favoriteKey(channel: Channel): String = MessageDigest.getInstance("SHA-256").digest(channel.url.toByteArray()).joinToString("") { "%02x".format(it) }
-    fun visibleChannels(): List<Channel> = channels.filter { (!favoritesOnly || favoriteKey(it) in favorites) && (category == "Todos" || it.group == category) }
+    fun visibleChannels(): List<Channel> = channels.filter { (!favoritesOnly || favoriteKey(it) in favorites) && (category == ALL_CATEGORIES || it.group == category) }
+
+    private fun xtreamClient(profile: XtreamProfile) = XtreamClient(
+        profile.server, profile.username, profile.password,
+        XtreamLabels(
+            context.getString(R.string.uncategorized),
+            context.getString(R.string.channel_untitled),
+            { context.getString(R.string.episode_default, it) },
+            { context.getString(R.string.season, it) },
+            { season, title -> context.getString(R.string.season_episode, season, title) },
+        ),
+    )
 }
 
 @Composable private fun NovaApp() {
@@ -202,10 +216,10 @@ class NovaViewModel(private val context: Context) : ViewModel() {
     var playlistUrl by remember(vm.savedPlaylistUrl) { mutableStateOf(vm.savedPlaylistUrl) }
     var showXtream by remember { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-        uri?.let { try { context.contentResolver.openInputStream(it)?.bufferedReader()?.use { r -> vm.load(r.readText()) } ?: vm.reportError("No se pudo abrir el archivo seleccionado.") } catch (e: Exception) { vm.reportError("No se pudo leer la lista: ${e.message ?: "archivo no válido"}") } }
+        uri?.let { try { context.contentResolver.openInputStream(it)?.bufferedReader()?.use { r -> vm.load(r.readText()) } ?: vm.reportError(context.getString(R.string.error_open_file)) } catch (e: Exception) { vm.reportError(context.getString(R.string.error_read_list, e.message ?: context.getString(R.string.error_invalid_file))) } }
     }
     val epgPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-        uri?.let { try { context.contentResolver.openInputStream(it)?.bufferedReader()?.use { reader -> vm.loadXmlTv(reader.readText()) } } catch (e: Exception) { vm.reportError("No se pudo leer el EPG: ${e.message ?: "archivo no válido"}") } }
+        uri?.let { try { context.contentResolver.openInputStream(it)?.bufferedReader()?.use { reader -> vm.loadXmlTv(reader.readText()) } } catch (e: Exception) { vm.reportError(context.getString(R.string.error_read_epg, e.message ?: context.getString(R.string.error_invalid_file))) } }
     }
     MaterialTheme(colorScheme = darkColorScheme(background = Ink, surface = Panel, primary = Violet, onBackground = Color.White, onSurface = Color.White)) {
         Surface(Modifier.fillMaxSize(), color = Ink) {
@@ -216,23 +230,23 @@ class NovaViewModel(private val context: Context) : ViewModel() {
                         Spacer(Modifier.width(12.dp))
                         Column {
                             Text("NOVA", fontWeight = FontWeight.Black, color = Color.White, style = MaterialTheme.typography.titleLarge)
-                            Text("TU TELEVISIÓN, A TU MANERA", style = MaterialTheme.typography.labelSmall, color = Color.LightGray)
+                            Text(stringResource(R.string.tagline), style = MaterialTheme.typography.labelSmall, color = Color.LightGray)
                         }
                     }
                     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        FilledTonalButton(onClick = { picker.launch(arrayOf("*/*")) }) { Icon(Icons.Default.Add, null); Spacer(Modifier.width(6.dp)); Text("Archivo") }
-                        OutlinedButton(onClick = { showXtream = true }) { Text("Xtream") }
-                        OutlinedButton(onClick = { epgPicker.launch(arrayOf("application/xml", "text/xml", "text/*", "application/octet-stream")) }) { Text("EPG") }
+                        FilledTonalButton(onClick = { picker.launch(arrayOf("*/*")) }) { Icon(Icons.Default.Add, null); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.action_file)) }
+                        OutlinedButton(onClick = { showXtream = true }) { Text(stringResource(R.string.action_xtream)) }
+                        OutlinedButton(onClick = { epgPicker.launch(arrayOf("application/xml", "text/xml", "text/*", "application/octet-stream")) }) { Text(stringResource(R.string.action_epg)) }
                     }
                 }
                 if (vm.selected != null) {
-                    TextButton(onClick = vm::stop) { Icon(Icons.Default.ArrowBack, null); Text(" Volver a canales") }
+                    TextButton(onClick = vm::stop) { Icon(Icons.Default.ArrowBack, null); Text(" ${stringResource(R.string.back_to_channels)}") }
                     Text(vm.selected!!.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 8.dp))
                     Player(vm.selected!!)
                     val xmltvGuide = vm.selected!!.epgId?.let { vm.xmltv[it] }.orEmpty()
                     val guide = vm.epg.ifEmpty { xmltvGuide }
                     if (guide.isNotEmpty()) {
-                        Text("Guía de programación", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 14.dp, bottom = 6.dp))
+                        Text(stringResource(R.string.guide_title), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 14.dp, bottom = 6.dp))
                         LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) { items(guide) { item ->
                             Row(Modifier.fillMaxWidth().background(Panel, RoundedCornerShape(12.dp)).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Text(item.start.takeLast(5), color = Violet, fontWeight = FontWeight.Bold, modifier = Modifier.width(58.dp))
@@ -241,43 +255,51 @@ class NovaViewModel(private val context: Context) : ViewModel() {
                         } }
                     }
                 } else {
-                    Text(if (vm.channels.isEmpty()) "Empieza con tu lista" else when (vm.catalog) { "movies" -> "Películas"; "series" -> "Series"; "episode" -> "Episodios"; else -> "TV en directo" }, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                    Text(if (vm.channels.isEmpty()) "Nova no incluye canales. Importa tu propio archivo M3U o M3U8." else "${vm.channels.size} canales · ${vm.channels.map { it.group }.distinct().size} categorías", color = Color(0xFF9AA3B7), modifier = Modifier.padding(top = 5.dp, bottom = 18.dp))
+                    Text(
+                        if (vm.channels.isEmpty()) stringResource(R.string.home_empty_title) else when (vm.catalog) {
+                            "movies" -> stringResource(R.string.catalog_movies)
+                            "series" -> stringResource(R.string.catalog_series)
+                            "episode" -> stringResource(R.string.catalog_episodes)
+                            else -> stringResource(R.string.catalog_live)
+                        },
+                        style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold,
+                    )
+                    Text(if (vm.channels.isEmpty()) stringResource(R.string.home_empty_description) else stringResource(R.string.channel_count, vm.channels.size, vm.channels.map { it.group }.distinct().size), color = Color(0xFF9AA3B7), modifier = Modifier.padding(top = 5.dp, bottom = 18.dp))
                     vm.error?.let { Text(it, color = Color(0xFFFF9B9B), modifier = Modifier.padding(bottom = 10.dp)) }
                     OutlinedTextField(
                         value = playlistUrl,
                         onValueChange = { playlistUrl = it },
                         modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                        label = { Text("Dirección de lista M3U / M3U8") },
-                        placeholder = { Text("https://ejemplo.com/lista.m3u") },
+                        label = { Text(stringResource(R.string.playlist_address_label)) },
+                        placeholder = { Text(stringResource(R.string.playlist_address_hint)) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done, autoCorrectEnabled = false),
                         keyboardActions = KeyboardActions(onDone = { vm.loadUrl(playlistUrl.trim()) }),
                     )
                     Row(Modifier.fillMaxWidth().padding(bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         OutlinedButton(enabled = playlistUrl.isNotBlank(), onClick = { vm.savePlaylistUrl(playlistUrl) }, modifier = Modifier.weight(1f)) {
-                            Text(if (vm.savedPlaylistUrl == playlistUrl.trim() && playlistUrl.isNotBlank()) "Lista guardada ✓" else "Guardar lista")
+                            Text(if (vm.savedPlaylistUrl == playlistUrl.trim() && playlistUrl.isNotBlank()) stringResource(R.string.playlist_saved) else stringResource(R.string.save_playlist))
                         }
                         Button(enabled = !vm.loading && playlistUrl.isNotBlank(), onClick = { vm.loadUrl(playlistUrl.trim()) }, modifier = Modifier.weight(1f)) {
-                            Text(if (vm.loading) "Cargando…" else "Cargar lista")
+                            Text(if (vm.loading) stringResource(R.string.loading) else stringResource(R.string.load_playlist))
                         }
                     }
                     if (vm.channels.isEmpty()) {
                         EmptyState { picker.launch(arrayOf("*/*")) }
                     } else {
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(bottom = 8.dp)) {
-                            listOf("live" to "En directo", "movies" to "Películas", "series" to "Series").forEach { (key, label) ->
-                                FilterChip(selected = vm.catalog == key, onClick = { vm.selectCatalog(key) }, label = { Text(label) })
+                            listOf("live" to R.string.catalog_live, "movies" to R.string.catalog_movies, "series" to R.string.catalog_series).forEach { (key, label) ->
+                                FilterChip(selected = vm.catalog == key, onClick = { vm.selectCatalog(key) }, label = { Text(stringResource(label)) })
                             }
                         }
                         var query by remember { mutableStateOf("") }
-                        OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth().padding(bottom = 12.dp), placeholder = { Text("Buscar canal") }, leadingIcon = { Icon(Icons.Default.Search, null) }, singleLine = true)
+                        OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth().padding(bottom = 12.dp), placeholder = { Text(stringResource(R.string.search_channel)) }, leadingIcon = { Icon(Icons.Default.Search, null) }, singleLine = true)
                         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            FilterChip(selected = !vm.favoritesOnly, onClick = { vm.favoritesOnly = false }, label = { Text("Todos") })
-                            FilterChip(selected = vm.favoritesOnly, onClick = { vm.favoritesOnly = !vm.favoritesOnly }, label = { Text("♡ Favoritos") })
-                            vm.channels.map { it.group }.distinct().forEach { group -> FilterChip(selected = vm.category == group, onClick = { vm.category = if (vm.category == group) "Todos" else group }, label = { Text(group) }) }
+                            FilterChip(selected = !vm.favoritesOnly && vm.category == ALL_CATEGORIES, onClick = { vm.favoritesOnly = false; vm.category = ALL_CATEGORIES }, label = { Text(stringResource(R.string.filter_all)) })
+                            FilterChip(selected = vm.favoritesOnly, onClick = { vm.favoritesOnly = !vm.favoritesOnly }, label = { Text(stringResource(R.string.filter_favorites)) })
+                            vm.channels.map { it.group }.distinct().forEach { group -> FilterChip(selected = vm.category == group, onClick = { vm.category = if (vm.category == group) ALL_CATEGORIES else group }, label = { Text(group) }) }
                         }
-                        if (vm.history.isNotEmpty()) Text("Recientes: ${vm.history.take(5).joinToString(" · ")}", color = Color(0xFF9AA3B7), style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 8.dp))
+                        if (vm.history.isNotEmpty()) Text(stringResource(R.string.recently_played, vm.history.take(5).joinToString(" · ")), color = Color(0xFF9AA3B7), style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 8.dp))
                         val filtered = vm.visibleChannels().filter { it.name.contains(query, true) || it.group.contains(query, true) }
                         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) { items(filtered, key = { it.sourceId ?: it.url }) { channel -> ChannelRow(channel, vm.favoriteKey(channel) in vm.favorites, { if (channel.kind == "series") vm.loadEpisodes(channel) else vm.play(channel) }, { if (channel.url.isNotBlank()) vm.toggleFavorite(channel) }) } }
                     }
@@ -289,31 +311,32 @@ class NovaViewModel(private val context: Context) : ViewModel() {
 }
 
 @Composable private fun XtreamDialog(profiles: List<XtreamProfile>, loading: Boolean, onDismiss: () -> Unit, onDelete: (String) -> Unit, onConnect: (XtreamProfile) -> Unit) {
+    val strings = LocalContext.current
     var name by remember { mutableStateOf("") }; var server by remember { mutableStateOf("") }; var username by remember { mutableStateOf("") }; var password by remember { mutableStateOf("") }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("Conectar proveedor Xtream") },
+    AlertDialog(onDismissRequest = onDismiss, title = { Text(stringResource(R.string.xtream_dialog_title)) },
         text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Los datos de acceso se cifran en este dispositivo. Nova no incluye proveedores ni contenido.", style = MaterialTheme.typography.bodySmall)
+            Text(stringResource(R.string.xtream_secure_info), style = MaterialTheme.typography.bodySmall)
             if (profiles.isNotEmpty()) {
-                Text("Perfiles guardados", fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.saved_profiles), fontWeight = FontWeight.SemiBold)
                 profiles.forEach { profile -> Row(verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = { name = profile.name; server = profile.server; username = profile.username; password = profile.password }) { Text(profile.name, maxLines = 1) }
-                    TextButton(onClick = { onConnect(profile) }) { Text("Conectar") }
-                    TextButton(onClick = { onDelete(profile.name) }) { Text("Borrar") }
+                    TextButton(onClick = { onConnect(profile) }) { Text(stringResource(R.string.connect)) }
+                    TextButton(onClick = { onDelete(profile.name) }) { Text(stringResource(R.string.delete)) }
                 } }
             }
-            OutlinedTextField(name, { name = it }, label = { Text("Nombre del perfil") }, singleLine = true)
-            OutlinedTextField(server, { server = it }, label = { Text("URL del servidor") }, singleLine = true)
-            OutlinedTextField(username, { username = it }, label = { Text("Usuario") }, singleLine = true)
-            OutlinedTextField(password, { password = it }, label = { Text("Contraseña") }, singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
-        } }, confirmButton = { TextButton(enabled = !loading && server.isNotBlank() && username.isNotBlank() && password.isNotBlank(), onClick = { onConnect(XtreamProfile(name.ifBlank { "Mi perfil" }, server, username, password)) }) { Text(if (loading) "Conectando…" else "Guardar y conectar") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } })
+            OutlinedTextField(name, { name = it }, label = { Text(stringResource(R.string.profile_name)) }, singleLine = true)
+            OutlinedTextField(server, { server = it }, label = { Text(stringResource(R.string.server_url)) }, singleLine = true)
+            OutlinedTextField(username, { username = it }, label = { Text(stringResource(R.string.username)) }, singleLine = true)
+            OutlinedTextField(password, { password = it }, label = { Text(stringResource(R.string.password)) }, singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
+        } }, confirmButton = { TextButton(enabled = !loading && server.isNotBlank() && username.isNotBlank() && password.isNotBlank(), onClick = { onConnect(XtreamProfile(name.ifBlank { strings.getString(R.string.profile_default) }, server, username, password)) }) { Text(if (loading) stringResource(R.string.loading) else stringResource(R.string.save_and_connect)) } }, dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } })
 }
 
 @Composable private fun EmptyState(onImport: () -> Unit) {
     Column(Modifier.fillMaxWidth().heightIn(min = 180.dp).padding(vertical = 18.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Box(Modifier.size(62.dp).background(Panel, RoundedCornerShape(20.dp)), Alignment.Center) { Icon(Icons.Default.LiveTv, null, tint = Violet, modifier = Modifier.size(32.dp)) }
-        Spacer(Modifier.height(12.dp)); Text("Tu pantalla. Tus canales.", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        Text("Añade una lista M3U o un proveedor Xtream.", color = Color(0xFF9AA3B7), modifier = Modifier.padding(8.dp))
-        Button(onClick = onImport) { Icon(Icons.Default.FolderOpen, null); Text("  Elegir archivo") }
+        Spacer(Modifier.height(12.dp)); Text(stringResource(R.string.empty_state_title), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Text(stringResource(R.string.empty_state_description), color = Color(0xFF9AA3B7), modifier = Modifier.padding(8.dp))
+        Button(onClick = onImport) { Icon(Icons.Default.FolderOpen, null); Text("  ${stringResource(R.string.choose_file)}") }
     }
 }
 
@@ -321,7 +344,7 @@ class NovaViewModel(private val context: Context) : ViewModel() {
     Row(Modifier.fillMaxWidth().background(Panel, RoundedCornerShape(16.dp)).clickable(onClick = onClick).padding(15.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(46.dp).background(Color(0xFF22283A), RoundedCornerShape(13.dp)), Alignment.Center) { Icon(Icons.Default.Tv, null, tint = Violet) }
         Spacer(Modifier.width(13.dp)); Column(Modifier.weight(1f)) { Text(channel.name, fontWeight = FontWeight.SemiBold); Text(channel.group, style = MaterialTheme.typography.bodySmall, color = Color(0xFF9AA3B7)) }
-        IconButton(onClick = onFavorite) { Icon(if (favorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder, "Favorito", tint = if (favorite) Violet else Color.Gray) }
+        IconButton(onClick = onFavorite) { Icon(if (favorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder, stringResource(R.string.favorite), tint = if (favorite) Violet else Color.Gray) }
         Icon(Icons.Default.PlayCircle, null, tint = Violet, modifier = Modifier.size(28.dp))
     }
 }
@@ -339,17 +362,17 @@ class NovaViewModel(private val context: Context) : ViewModel() {
             instance to null
         } catch (exception: Exception) {
             Log.e("NovaIPTV", "ExoPlayer initialization failed", exception)
-            null to "${exception.javaClass.simpleName}: ${exception.localizedMessage ?: "sin detalle"}"
+            null to context.getString(R.string.player_init_error, "${exception.javaClass.simpleName}: ${exception.localizedMessage ?: context.getString(R.string.player_init_unknown)}")
         }
     }
     val player = initResult.first
     if (player == null) {
-        Text("No se pudo iniciar el reproductor. ${initResult.second.orEmpty()}", color = Color(0xFFFF9B9B), modifier = Modifier.padding(16.dp))
+        Text(initResult.second ?: stringResource(R.string.player_invalid_url), color = Color(0xFFFF9B9B), modifier = Modifier.padding(16.dp))
     } else {
         DisposableEffect(player) {
             val listener = object : androidx.media3.common.Player.Listener {
                 override fun onPlayerError(error: PlaybackException) {
-                    playbackError = "No se pudo reproducir este canal (${error.errorCodeName}). ${error.message.orEmpty()}"
+                    playbackError = context.getString(R.string.player_error, error.errorCodeName, error.message.orEmpty())
                 }
             }
             player.addListener(listener)
@@ -368,7 +391,7 @@ class NovaViewModel(private val context: Context) : ViewModel() {
                 Box(Modifier.fillMaxSize().background(Color.Black)) {
                     AndroidView(factory = { ctx -> PlayerView(ctx).apply { this.player = player; useController = true } }, modifier = Modifier.fillMaxSize())
                     IconButton(onClick = { fullScreen = false }, modifier = Modifier.align(Alignment.TopEnd).padding(16.dp).background(Color(0x99000000), RoundedCornerShape(50))) {
-                        Icon(Icons.Default.FullscreenExit, "Salir de pantalla completa", tint = Color.White)
+                    Icon(Icons.Default.FullscreenExit, stringResource(R.string.exit_fullscreen), tint = Color.White)
                     }
                 }
             }
@@ -376,7 +399,7 @@ class NovaViewModel(private val context: Context) : ViewModel() {
             Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Color.Black, RoundedCornerShape(18.dp))) {
                 AndroidView(factory = { ctx -> PlayerView(ctx).apply { this.player = player; useController = true } }, modifier = Modifier.fillMaxSize())
                 IconButton(onClick = { fullScreen = true }, modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).background(Color(0x99000000), RoundedCornerShape(50))) {
-                    Icon(Icons.Default.Fullscreen, "Pantalla completa", tint = Color.White)
+                    Icon(Icons.Default.Fullscreen, stringResource(R.string.fullscreen), tint = Color.White)
                 }
             }
         }

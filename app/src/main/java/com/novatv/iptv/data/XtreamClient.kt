@@ -7,8 +7,21 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 
+data class XtreamLabels(
+    val uncategorized: String,
+    val untitled: String,
+    val defaultEpisode: (Int) -> String,
+    val season: (String) -> String,
+    val seasonEpisode: (String, String) -> String,
+)
+
 /** Small synchronous client; call it from Dispatchers.IO. */
-class XtreamClient(server: String, private val username: String, private val password: String) {
+class XtreamClient(
+    server: String,
+    private val username: String,
+    private val password: String,
+    private val labels: XtreamLabels = XtreamLabels("Sin categoría", "Sin título", { "Episodio $it" }, { "Temporada $it" }, { season, title -> "T$season · $title" }),
+) {
     private val base = server.trim().trimEnd('/')
 
     fun list(kind: String): List<Channel> {
@@ -30,9 +43,9 @@ class XtreamClient(server: String, private val username: String, private val pas
                 val row = rows.optJSONObject(i) ?: continue
                 val id = row.optString(if (kind == "series") "series_id" else if (kind == "movies") "stream_id" else "stream_id")
                 if (id.isBlank() || id == "null") continue
-                val title = row.optString(if (kind == "series") "name" else "name", "Sin título")
+                val title = row.optString("name").ifBlank { labels.untitled }
                 val categoryId = row.optString("category_id").takeIf { it != "null" }.orEmpty()
-                val group = row.optString("category_name").ifBlank { categories[categoryId] ?: "Sin categoría" }
+                val group = row.optString("category_name").ifBlank { categories[categoryId] ?: labels.uncategorized }
                 val ext = row.optString("container_extension").ifBlank { "mp4" }
                 val path = when (kind) {
                     "movies" -> "movie/$username/$password/$id.$ext"
@@ -57,8 +70,8 @@ class XtreamClient(server: String, private val username: String, private val pas
                     val id = row.optString("id")
                     if (id.isBlank()) continue
                     val ext = row.optString("container_extension").ifBlank { "mp4" }
-                    val title = row.optString("title", "Episodio ${i + 1}")
-                    add(Channel("T$season · $title", "$base/series/$username/$password/$id.$ext", "Temporada $season", kind = "episode", sourceId = id))
+                    val title = row.optString("title").ifBlank { labels.defaultEpisode(i + 1) }
+                    add(Channel(labels.seasonEpisode(season, title), "$base/series/$username/$password/$id.$ext", labels.season(season), kind = "episode", sourceId = id))
                 }
             }
         }
