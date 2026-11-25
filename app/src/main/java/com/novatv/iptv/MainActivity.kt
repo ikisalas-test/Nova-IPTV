@@ -32,6 +32,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import androidx.compose.ui.viewinterop.AndroidView
@@ -71,17 +72,20 @@ class NovaViewModel(private val context: Context) : ViewModel() {
     var catalog by mutableStateOf("live")
     private var allItems = emptyList<Channel>()
     private val profileStore = SecureProfileStore(context)
+    var savedPlaylistUrl by mutableStateOf(profileStore.playlistUrl().orEmpty()); private set
     var savedProfiles by mutableStateOf(profileStore.profiles()); private set
     private var activeProfileName: String? = null
     private val prefs = context.getSharedPreferences("nova_library", Context.MODE_PRIVATE)
     init {
         favorites = prefs.getStringSet("favorites", emptySet())?.toSet() ?: emptySet()
         history = prefs.getString("history", "")!!.split('\n').filter(String::isNotBlank).take(30)
+        if (savedPlaylistUrl.isNotBlank()) loadUrl(savedPlaylistUrl)
     }
-    fun load(text: String) {
+    fun load(text: String): Boolean {
         val parsed = M3uParser.parse(text)
-        if (parsed.isEmpty()) error = "No encontramos canales. Comprueba que el archivo sea una lista M3U válida."
-        else { channels = parsed; allItems = parsed; catalog = "live"; selected = null; category = "Todos"; error = null }
+        if (parsed.isEmpty()) { error = "No encontramos canales. Comprueba que el archivo sea una lista M3U válida."; return false }
+        channels = parsed; allItems = parsed; catalog = "live"; selected = null; category = "Todos"; error = null
+        return true
     }
     fun loadXmlTv(text: String) {
         try {
@@ -139,7 +143,10 @@ class NovaViewModel(private val context: Context) : ViewModel() {
                     try { if (connection.responseCode !in 200..299) error("HTTP ${connection.responseCode}"); connection.inputStream.bufferedReader().use { it.readText() } }
                     finally { connection.disconnect() }
                 }
-                load(body)
+                if (load(body)) {
+                    savedPlaylistUrl = url
+                    profileStore.savePlaylistUrl(url)
+                }
             } catch (e: Exception) { error = "No se pudo cargar la lista: ${e.message ?: "error de conexión"}" }
             finally { loading = false }
         }
@@ -170,7 +177,7 @@ class NovaViewModel(private val context: Context) : ViewModel() {
     val vm: NovaViewModel = androidx.lifecycle.viewmodel.compose.viewModel(factory = object : androidx.lifecycle.ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST") override fun <T : ViewModel> create(modelClass: Class<T>): T = NovaViewModel(context.applicationContext) as T
     })
-    var playlistUrl by remember { mutableStateOf("") }
+    var playlistUrl by remember(vm.savedPlaylistUrl) { mutableStateOf(vm.savedPlaylistUrl) }
     var showXtream by remember { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         uri?.let { try { context.contentResolver.openInputStream(it)?.bufferedReader()?.use { r -> vm.load(r.readText()) } ?: vm.reportError("No se pudo abrir el archivo seleccionado.") } catch (e: Exception) { vm.reportError("No se pudo leer la lista: ${e.message ?: "archivo no válido"}") } }
@@ -292,7 +299,23 @@ class NovaViewModel(private val context: Context) : ViewModel() {
 
 @Composable private fun Player(channel: Channel) {
     val context = LocalContext.current
-    val player = remember(channel.url) { ExoPlayer.Builder(context).build().apply { setMediaItem(MediaItem.fromUri(channel.url)); prepare(); playWhenReady = true } }
-    DisposableEffect(player) { onDispose { player.release() } }
-    AndroidView(factory = { ctx -> PlayerView(ctx).apply { this.player = player; useController = true } }, modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Color.Black, RoundedCornerShape(18.dp)))
+    var playbackError by remember(channel.url) { mutableStateOf<String?>(null) }
+    val player = remember(channel.url) {
+        runCatching { ExoPlayer.Builder(context).build().apply { setMediaItem(MediaItem.fromUri(channel.url)); prepare(); playWhenReady = true } }.getOrNull()
+    }
+    if (player == null) {
+        Text("No se pudo iniciar el reproductor. Comprueba que la dirección del canal sea válida.", color = Color(0xFFFF9B9B), modifier = Modifier.padding(16.dp))
+    } else {
+        DisposableEffect(player) {
+            val listener = object : androidx.media3.common.Player.Listener {
+                override fun onPlayerError(error: PlaybackException) {
+                    playbackError = "No se pudo reproducir este canal (${error.errorCodeName}). ${error.message.orEmpty()}"
+                }
+            }
+            player.addListener(listener)
+            onDispose { player.removeListener(listener); player.release() }
+        }
+        AndroidView(factory = { ctx -> PlayerView(ctx).apply { this.player = player; useController = true } }, modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Color.Black, RoundedCornerShape(18.dp)))
+        playbackError?.let { Text(it, color = Color(0xFFFF9B9B), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 8.dp)) }
+    }
 }

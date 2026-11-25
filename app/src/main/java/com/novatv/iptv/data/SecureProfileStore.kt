@@ -18,14 +18,13 @@ class SecureProfileStore(context: Context) {
     private val prefs = context.getSharedPreferences("secure_profiles", Context.MODE_PRIVATE)
 
     fun save(profile: XtreamProfile) {
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, key())
         val payload = JSONObject().put("name", profile.name).put("server", profile.server)
             .put("username", profile.username).put("password", profile.password).toString()
-        val ciphertext = cipher.doFinal(payload.toByteArray(Charsets.UTF_8))
-        val packed = Base64.encodeToString(cipher.iv, Base64.NO_WRAP) + ":" + Base64.encodeToString(ciphertext, Base64.NO_WRAP)
-        prefs.edit().putString(storageKey(profile.name), packed).apply()
+        prefs.edit().putString(storageKey(profile.name), encrypt(payload)).apply()
     }
+
+    fun savePlaylistUrl(url: String) { prefs.edit().putString(PLAYLIST_KEY, encrypt(url)).apply() }
+    fun playlistUrl(): String? = prefs.getString(PLAYLIST_KEY, null)?.let(::decryptText)
 
     fun profiles(): List<XtreamProfile> = prefs.all.keys.filter { it.startsWith(PREFIX) }
         .mapNotNull { decrypt(it) }.sortedBy { it.name.lowercase() }
@@ -36,12 +35,23 @@ class SecureProfileStore(context: Context) {
 
     private fun decrypt(storageKey: String): XtreamProfile? = runCatching {
         val packed = prefs.getString(storageKey, null) ?: return null
+        val data = JSONObject(decryptText(packed))
+        XtreamProfile(data.getString("name"), data.getString("server"), data.getString("username"), data.getString("password"))
+    }.getOrNull()
+
+    private fun encrypt(value: String): String {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, key())
+        val ciphertext = cipher.doFinal(value.toByteArray(Charsets.UTF_8))
+        return Base64.encodeToString(cipher.iv, Base64.NO_WRAP) + ":" + Base64.encodeToString(ciphertext, Base64.NO_WRAP)
+    }
+
+    private fun decryptText(packed: String): String {
         val pieces = packed.split(':', limit = 2)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, Base64.decode(pieces[0], Base64.NO_WRAP)))
-        val data = JSONObject(String(cipher.doFinal(Base64.decode(pieces[1], Base64.NO_WRAP)), Charsets.UTF_8))
-        XtreamProfile(data.getString("name"), data.getString("server"), data.getString("username"), data.getString("password"))
-    }.getOrNull()
+        return String(cipher.doFinal(Base64.decode(pieces[1], Base64.NO_WRAP)), Charsets.UTF_8)
+    }
 
     private fun storageKey(name: String) = PREFIX + Base64.encodeToString(name.toByteArray(Charsets.UTF_8), Base64.URL_SAFE or Base64.NO_WRAP)
 
@@ -55,5 +65,5 @@ class SecureProfileStore(context: Context) {
         }
     }
 
-    private companion object { const val ALIAS = "nova.iptv.profile.v1"; const val PREFIX = "profile:" }
+    private companion object { const val ALIAS = "nova.iptv.profile.v1"; const val PREFIX = "profile:"; const val PLAYLIST_KEY = "playlist_url" }
 }
