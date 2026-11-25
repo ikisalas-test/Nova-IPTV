@@ -25,6 +25,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
@@ -176,13 +180,21 @@ class NovaViewModel(private val context: Context) : ViewModel() {
     }
     MaterialTheme(colorScheme = darkColorScheme(background = Ink, surface = Panel, primary = Violet, onBackground = Color.White, onSurface = Color.White)) {
         Surface(Modifier.fillMaxSize(), color = Ink) {
-            Column(Modifier.fillMaxSize().padding(horizontal = 24.dp)) {
-                Row(Modifier.fillMaxWidth().padding(top = 22.dp, bottom = 18.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(42.dp).background(Violet, RoundedCornerShape(14.dp)), Alignment.Center) { Icon(Icons.Default.PlayArrow, null, tint = Ink) }
-                    Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text("NOVA", fontWeight = FontWeight.Black, color = Color.White); Text("TU TELEVISIÓN, A TU MANERA", style = MaterialTheme.typography.labelSmall, color = Color.LightGray) }
-                    FilledTonalButton(onClick = { picker.launch(arrayOf("*/*")) }) { Icon(Icons.Default.Add, null); Spacer(Modifier.width(6.dp)); Text("Archivo") }
-                    Spacer(Modifier.width(8.dp)); OutlinedButton(onClick = { showXtream = true }) { Text("Xtream") }
-                    Spacer(Modifier.width(6.dp)); OutlinedButton(onClick = { epgPicker.launch(arrayOf("application/xml", "text/xml", "text/*", "application/octet-stream")) }) { Text("EPG") }
+            Column(Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
+                Column(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(42.dp).background(Violet, RoundedCornerShape(14.dp)), Alignment.Center) { Icon(Icons.Default.PlayArrow, null, tint = Ink) }
+                        Spacer(Modifier.width(12.dp))
+                        Column {
+                            Text("NOVA", fontWeight = FontWeight.Black, color = Color.White, style = MaterialTheme.typography.titleLarge)
+                            Text("TU TELEVISIÓN, A TU MANERA", style = MaterialTheme.typography.labelSmall, color = Color.LightGray)
+                        }
+                    }
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        FilledTonalButton(onClick = { picker.launch(arrayOf("*/*")) }) { Icon(Icons.Default.Add, null); Spacer(Modifier.width(6.dp)); Text("Archivo") }
+                        OutlinedButton(onClick = { showXtream = true }) { Text("Xtream") }
+                        OutlinedButton(onClick = { epgPicker.launch(arrayOf("application/xml", "text/xml", "text/*", "application/octet-stream")) }) { Text("EPG") }
+                    }
                 }
                 if (vm.selected != null) {
                     TextButton(onClick = vm::stop) { Icon(Icons.Default.ArrowBack, null); Text(" Volver a canales") }
@@ -203,6 +215,17 @@ class NovaViewModel(private val context: Context) : ViewModel() {
                     Text(if (vm.channels.isEmpty()) "Empieza con tu lista" else when (vm.catalog) { "movies" -> "Películas"; "series" -> "Series"; "episode" -> "Episodios"; else -> "TV en directo" }, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                     Text(if (vm.channels.isEmpty()) "Nova no incluye canales. Importa tu propio archivo M3U o M3U8." else "${vm.channels.size} canales · ${vm.channels.map { it.group }.distinct().size} categorías", color = Color(0xFF9AA3B7), modifier = Modifier.padding(top = 5.dp, bottom = 18.dp))
                     vm.error?.let { Text(it, color = Color(0xFFFF9B9B), modifier = Modifier.padding(bottom = 10.dp)) }
+                    OutlinedTextField(
+                        value = playlistUrl,
+                        onValueChange = { playlistUrl = it },
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                        label = { Text("Dirección de lista M3U / M3U8") },
+                        placeholder = { Text("https://ejemplo.com/lista.m3u") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done, autoCorrectEnabled = false),
+                        keyboardActions = KeyboardActions(onDone = { vm.loadUrl(playlistUrl.trim()) }),
+                        trailingIcon = { TextButton(enabled = !vm.loading && playlistUrl.isNotBlank(), onClick = { vm.loadUrl(playlistUrl.trim()) }) { Text(if (vm.loading) "Cargando…" else "Cargar") } },
+                    )
                     if (vm.channels.isEmpty()) {
                         EmptyState { picker.launch(arrayOf("*/*")) }
                     } else {
@@ -222,8 +245,6 @@ class NovaViewModel(private val context: Context) : ViewModel() {
                         val filtered = vm.visibleChannels().filter { it.name.contains(query, true) || it.group.contains(query, true) }
                         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) { items(filtered, key = { it.sourceId ?: it.url }) { channel -> ChannelRow(channel, vm.favoriteKey(channel) in vm.favorites, { if (channel.kind == "series") vm.loadEpisodes(channel) else vm.play(channel) }, { if (channel.url.isNotBlank()) vm.toggleFavorite(channel) }) } }
                     }
-                    Spacer(Modifier.height(12.dp))
-                    OutlinedTextField(playlistUrl, { playlistUrl = it }, Modifier.fillMaxWidth(), label = { Text("URL de lista M3U / M3U8") }, singleLine = true, trailingIcon = { TextButton(enabled = !vm.loading, onClick = { vm.loadUrl(playlistUrl.trim()) }) { Text(if (vm.loading) "Cargando…" else "Cargar") } })
                 }
             }
         }
@@ -252,11 +273,11 @@ class NovaViewModel(private val context: Context) : ViewModel() {
 }
 
 @Composable private fun EmptyState(onImport: () -> Unit) {
-    Column(Modifier.fillMaxWidth().heightIn(min = 280.dp).padding(bottom = 30.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-        Box(Modifier.size(88.dp).background(Panel, RoundedCornerShape(28.dp)), Alignment.Center) { Icon(Icons.Default.LiveTv, null, tint = Violet, modifier = Modifier.size(42.dp)) }
-        Spacer(Modifier.height(18.dp)); Text("Tu pantalla. Tus canales.", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        Text("Carga una lista M3U para comenzar a ver.", color = Color(0xFF9AA3B7), modifier = Modifier.padding(8.dp))
-        Spacer(Modifier.height(14.dp)); Button(onClick = onImport) { Icon(Icons.Default.FolderOpen, null); Text("  Elegir archivo") }
+    Column(Modifier.fillMaxWidth().heightIn(min = 180.dp).padding(vertical = 18.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        Box(Modifier.size(62.dp).background(Panel, RoundedCornerShape(20.dp)), Alignment.Center) { Icon(Icons.Default.LiveTv, null, tint = Violet, modifier = Modifier.size(32.dp)) }
+        Spacer(Modifier.height(12.dp)); Text("Tu pantalla. Tus canales.", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Text("Añade una lista M3U o un proveedor Xtream.", color = Color(0xFF9AA3B7), modifier = Modifier.padding(8.dp))
+        Button(onClick = onImport) { Icon(Icons.Default.FolderOpen, null); Text("  Elegir archivo") }
     }
 }
 
