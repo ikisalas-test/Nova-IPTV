@@ -32,11 +32,12 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import androidx.compose.ui.viewinterop.AndroidView
 import com.novatv.iptv.data.Channel
+import com.novatv.iptv.data.EpgProgram
 import com.novatv.iptv.data.M3uParser
 import com.novatv.iptv.data.SecureProfileStore
 import com.novatv.iptv.data.XtreamClient
 import com.novatv.iptv.data.XtreamProfile
-import com.novatv.iptv.data.EpgProgram
+import com.novatv.iptv.data.XmlTvParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -62,9 +63,12 @@ class NovaViewModel(private val context: Context) : ViewModel() {
     var favorites by mutableStateOf<Set<String>>(emptySet()); private set
     var history by mutableStateOf<List<String>>(emptyList()); private set
     var epg by mutableStateOf<List<EpgProgram>>(emptyList()); private set
+    var xmltv by mutableStateOf<Map<String, List<EpgProgram>>>(emptyMap()); private set
     var catalog by mutableStateOf("live")
     private var allItems = emptyList<Channel>()
     private val profileStore = SecureProfileStore(context)
+    var savedProfiles by mutableStateOf(profileStore.profiles()); private set
+    private var activeProfileName: String? = null
     private val prefs = context.getSharedPreferences("nova_library", Context.MODE_PRIVATE)
     init {
         favorites = prefs.getStringSet("favorites", emptySet())?.toSet() ?: emptySet()
@@ -75,11 +79,23 @@ class NovaViewModel(private val context: Context) : ViewModel() {
         if (parsed.isEmpty()) error = "No encontramos canales. Comprueba que el archivo sea una lista M3U válida."
         else { channels = parsed; allItems = parsed; catalog = "live"; selected = null; category = "Todos"; error = null }
     }
-    fun connectXtream(server: String, username: String, password: String) {
+    fun loadXmlTv(text: String) {
+        try {
+            val parsed = XmlTvParser.parse(text)
+            if (parsed.isEmpty()) error = "El archivo XMLTV no contiene emisiones reconocibles."
+            else { xmltv = parsed; error = null }
+        } catch (e: Exception) { error = "No se pudo analizar el EPG: ${e.message ?: "XML inválido"}" }
+    }
+    fun reportError(message: String) { error = message }
+    fun deleteProfile(name: String) {
+        profileStore.delete(name); savedProfiles = profileStore.profiles()
+        if (activeProfileName == name) activeProfileName = null
+    }
+    fun connectXtream(name: String, server: String, username: String, password: String) {
         viewModelScope.launch {
             loading = true; error = null
             try {
-                val profile = XtreamProfile("Mi perfil", server.trim().trimEnd('/'), username.trim(), password)
+                val profile = XtreamProfile(name.trim().ifBlank { "Mi perfil" }, server.trim().trimEnd('/'), username.trim(), password)
                 val lists = withContext(Dispatchers.IO) {
                     val client = XtreamClient(profile.server, profile.username, profile.password)
                     client.list("live") + client.list("movies") + client.list("series")
@@ -87,6 +103,8 @@ class NovaViewModel(private val context: Context) : ViewModel() {
                 if (lists.isEmpty()) error = "El proveedor no devolvió canales ni contenidos. Revisa servidor y acceso."
                 else {
                     profileStore.save(profile)
+                    savedProfiles = profileStore.profiles()
+                    activeProfileName = profile.name
                     allItems = lists; channels = lists; catalog = "live"; category = "Todos"
                 }
             } catch (e: Exception) { error = "No se pudo conectar con el proveedor: ${e.message ?: "error de conexión"}" }
@@ -94,7 +112,7 @@ class NovaViewModel(private val context: Context) : ViewModel() {
         }
     }
     fun loadEpisodes(series: Channel) {
-        val profile = profileStore.load() ?: run { error = "Vuelve a conectar tu perfil Xtream para ver episodios."; return }
+        val profile = activeProfileName?.let(profileStore::load) ?: run { error = "Selecciona un perfil Xtream para ver episodios."; return }
         viewModelScope.launch {
             loading = true
             try {
@@ -126,7 +144,7 @@ class NovaViewModel(private val context: Context) : ViewModel() {
         selected = channel
         epg = emptyList()
         if (channel.kind == "live" && channel.sourceId != null) {
-            profileStore.load()?.let { profile -> viewModelScope.launch {
+            activeProfileName?.let(profileStore::load)?.let { profile -> viewModelScope.launch {
                 epg = withContext(Dispatchers.IO) { XtreamClient(profile.server, profile.username, profile.password).epg(channel.sourceId) }
             } }
         }
@@ -151,7 +169,10 @@ class NovaViewModel(private val context: Context) : ViewModel() {
     var playlistUrl by remember { mutableStateOf("") }
     var showXtream by remember { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-        uri?.let { try { context.contentResolver.openInputStream(it)?.bufferedReader()?.use { r -> vm.load(r.readText()) } ?: run { } } catch (_: Exception) { } }
+        uri?.let { try { context.contentResolver.openInputStream(it)?.bufferedReader()?.use { r -> vm.load(r.readText()) } ?: vm.reportError("No se pudo abrir el archivo seleccionado.") } catch (e: Exception) { vm.reportError("No se pudo leer la lista: ${e.message ?: "archivo no válido"}") } }
+    }
+    val epgPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        uri?.let { try { context.contentResolver.openInputStream(it)?.bufferedReader()?.use { reader -> vm.loadXmlTv(reader.readText()) } } catch (e: Exception) { vm.reportError("No se pudo leer el EPG: ${e.message ?: "archivo no válido"}") } }
     }
     MaterialTheme(colorScheme = darkColorScheme(background = Ink, surface = Panel, primary = Violet, onBackground = Color.White, onSurface = Color.White)) {
         Surface(Modifier.fillMaxSize(), color = Ink) {
@@ -161,14 +182,17 @@ class NovaViewModel(private val context: Context) : ViewModel() {
                     Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text("NOVA", fontWeight = FontWeight.Black, color = Color.White); Text("TU TELEVISIÓN, A TU MANERA", style = MaterialTheme.typography.labelSmall, color = Color.LightGray) }
                     FilledTonalButton(onClick = { picker.launch(arrayOf("*/*")) }) { Icon(Icons.Default.Add, null); Spacer(Modifier.width(6.dp)); Text("Archivo") }
                     Spacer(Modifier.width(8.dp)); OutlinedButton(onClick = { showXtream = true }) { Text("Xtream") }
+                    Spacer(Modifier.width(6.dp)); OutlinedButton(onClick = { epgPicker.launch(arrayOf("application/xml", "text/xml", "text/*", "application/octet-stream")) }) { Text("EPG") }
                 }
                 if (vm.selected != null) {
                     TextButton(onClick = vm::stop) { Icon(Icons.Default.ArrowBack, null); Text(" Volver a canales") }
                     Text(vm.selected!!.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 8.dp))
                     Player(vm.selected!!)
-                    if (vm.epg.isNotEmpty()) {
+                    val xmltvGuide = vm.selected!!.epgId?.let { vm.xmltv[it] }.orEmpty()
+                    val guide = vm.epg.ifEmpty { xmltvGuide }
+                    if (guide.isNotEmpty()) {
                         Text("Guía de programación", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 14.dp, bottom = 6.dp))
-                        LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) { items(vm.epg) { item ->
+                        LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) { items(guide) { item ->
                             Row(Modifier.fillMaxWidth().background(Panel, RoundedCornerShape(12.dp)).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Text(item.start.takeLast(5), color = Violet, fontWeight = FontWeight.Bold, modifier = Modifier.width(58.dp))
                                 Column { Text(item.title, fontWeight = FontWeight.SemiBold); if (item.description.isNotBlank()) Text(item.description, color = Color(0xFF9AA3B7), style = MaterialTheme.typography.bodySmall, maxLines = 2) }
@@ -204,18 +228,27 @@ class NovaViewModel(private val context: Context) : ViewModel() {
             }
         }
     }
-    if (showXtream) XtreamDialog(loading = vm.loading, onDismiss = { showXtream = false }, onConnect = { server, user, pass -> showXtream = false; vm.connectXtream(server, user, pass) })
+    if (showXtream) XtreamDialog(profiles = vm.savedProfiles, loading = vm.loading, onDismiss = { showXtream = false }, onDelete = vm::deleteProfile, onConnect = { profile -> showXtream = false; vm.connectXtream(profile.name, profile.server, profile.username, profile.password) })
 }
 
-@Composable private fun XtreamDialog(loading: Boolean, onDismiss: () -> Unit, onConnect: (String, String, String) -> Unit) {
-    var server by remember { mutableStateOf("") }; var username by remember { mutableStateOf("") }; var password by remember { mutableStateOf("") }
+@Composable private fun XtreamDialog(profiles: List<XtreamProfile>, loading: Boolean, onDismiss: () -> Unit, onDelete: (String) -> Unit, onConnect: (XtreamProfile) -> Unit) {
+    var name by remember { mutableStateOf("") }; var server by remember { mutableStateOf("") }; var username by remember { mutableStateOf("") }; var password by remember { mutableStateOf("") }
     AlertDialog(onDismissRequest = onDismiss, title = { Text("Conectar proveedor Xtream") },
         text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Los datos de acceso se cifran en este dispositivo. Nova no incluye proveedores ni contenido.", style = MaterialTheme.typography.bodySmall)
+            if (profiles.isNotEmpty()) {
+                Text("Perfiles guardados", fontWeight = FontWeight.SemiBold)
+                profiles.forEach { profile -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { name = profile.name; server = profile.server; username = profile.username; password = profile.password }) { Text(profile.name, maxLines = 1) }
+                    TextButton(onClick = { onConnect(profile) }) { Text("Conectar") }
+                    TextButton(onClick = { onDelete(profile.name) }) { Text("Borrar") }
+                } }
+            }
+            OutlinedTextField(name, { name = it }, label = { Text("Nombre del perfil") }, singleLine = true)
             OutlinedTextField(server, { server = it }, label = { Text("URL del servidor") }, singleLine = true)
             OutlinedTextField(username, { username = it }, label = { Text("Usuario") }, singleLine = true)
             OutlinedTextField(password, { password = it }, label = { Text("Contraseña") }, singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
-        } }, confirmButton = { TextButton(enabled = !loading && server.isNotBlank() && username.isNotBlank() && password.isNotBlank(), onClick = { onConnect(server, username, password) }) { Text(if (loading) "Conectando…" else "Conectar") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } })
+        } }, confirmButton = { TextButton(enabled = !loading && server.isNotBlank() && username.isNotBlank() && password.isNotBlank(), onClick = { onConnect(XtreamProfile(name.ifBlank { "Mi perfil" }, server, username, password)) }) { Text(if (loading) "Conectando…" else "Guardar y conectar") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } })
 }
 
 @Composable private fun EmptyState(onImport: () -> Unit) {

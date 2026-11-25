@@ -7,8 +7,6 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 
-data class EpgProgram(val title: String, val start: String, val end: String, val description: String)
-
 /** Small synchronous client; call it from Dispatchers.IO. */
 class XtreamClient(server: String, private val username: String, private val password: String) {
     private val base = server.trim().trimEnd('/')

@@ -24,17 +24,26 @@ class SecureProfileStore(context: Context) {
             .put("username", profile.username).put("password", profile.password).toString()
         val ciphertext = cipher.doFinal(payload.toByteArray(Charsets.UTF_8))
         val packed = Base64.encodeToString(cipher.iv, Base64.NO_WRAP) + ":" + Base64.encodeToString(ciphertext, Base64.NO_WRAP)
-        prefs.edit().putString("xtream", packed).apply()
+        prefs.edit().putString(storageKey(profile.name), packed).apply()
     }
 
-    fun load(): XtreamProfile? = runCatching {
-        val packed = prefs.getString("xtream", null) ?: return null
+    fun profiles(): List<XtreamProfile> = prefs.all.keys.filter { it.startsWith(PREFIX) }
+        .mapNotNull { decrypt(it) }.sortedBy { it.name.lowercase() }
+
+    fun load(name: String): XtreamProfile? = decrypt(storageKey(name))
+
+    fun delete(name: String) { prefs.edit().remove(storageKey(name)).apply() }
+
+    private fun decrypt(storageKey: String): XtreamProfile? = runCatching {
+        val packed = prefs.getString(storageKey, null) ?: return null
         val pieces = packed.split(':', limit = 2)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, Base64.decode(pieces[0], Base64.NO_WRAP)))
         val data = JSONObject(String(cipher.doFinal(Base64.decode(pieces[1], Base64.NO_WRAP)), Charsets.UTF_8))
         XtreamProfile(data.getString("name"), data.getString("server"), data.getString("username"), data.getString("password"))
     }.getOrNull()
+
+    private fun storageKey(name: String) = PREFIX + Base64.encodeToString(name.toByteArray(Charsets.UTF_8), Base64.URL_SAFE or Base64.NO_WRAP)
 
     private fun key(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
@@ -46,5 +55,5 @@ class SecureProfileStore(context: Context) {
         }
     }
 
-    private companion object { const val ALIAS = "nova.iptv.profile.v1" }
+    private companion object { const val ALIAS = "nova.iptv.profile.v1"; const val PREFIX = "profile:" }
 }
