@@ -1,6 +1,14 @@
 package com.novatv.iptv.data
 
-data class Channel(val name: String, val url: String, val group: String = "Sin categoría", val logo: String? = null)
+data class Channel(
+    val name: String,
+    val url: String,
+    val group: String = "Sin categoría",
+    val logo: String? = null,
+    val kind: String = "live",
+    val sourceId: String? = null,
+    val description: String? = null,
+)
 
 object M3uParser {
     fun parse(text: String): List<Channel> {
