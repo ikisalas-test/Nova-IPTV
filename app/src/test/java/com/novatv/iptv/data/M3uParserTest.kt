@@ -18,4 +18,15 @@ https://stream.test/dos.m3u8
         assertEquals("news", channels[0].epgId)
         assertEquals("Sin categoría", channels[1].group)
     }
+
+    @Test fun keepsCommasInChannelNamesAndSkipsOrphanUrls() {
+        val channels = M3uParser.parse("""#EXTM3U
+https://stream.test/orphan.m3u8
+#EXTINF:-1 group-title="World",News, International
+#EXTVLCOPT:http-user-agent=Nova
+https://stream.test/news.m3u8
+""")
+        assertEquals(1, channels.size)
+        assertEquals("News, International", channels.single().name)
+    }
 }

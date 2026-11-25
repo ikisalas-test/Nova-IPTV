@@ -26,7 +26,7 @@ object M3uParser {
                 line.startsWith("#EXTINF", ignoreCase = true) -> {
                     val attrs = Regex("([\\w-]+)=\\\"([^\\\"]*)\\\"").findAll(line)
                         .associate { it.groupValues[1].lowercase() to it.groupValues[2] }
-                    title = line.substringAfterLast(',').trim().ifBlank { "Canal sin nombre" }
+                    title = line.substringAfter(',', line).trim().ifBlank { "Canal sin nombre" }
                     group = attrs["group-title"]?.takeIf(String::isNotBlank) ?: "Sin categoría"
                     logo = attrs["tvg-logo"]?.takeIf(String::isNotBlank)
                     epgId = attrs["tvg-id"]?.takeIf(String::isNotBlank)

@@ -23,8 +23,10 @@ class SecureProfileStore(context: Context) {
         prefs.edit().putString(storageKey(profile.name), encrypt(payload)).apply()
     }
 
-    fun savePlaylistUrl(url: String) { prefs.edit().putString(PLAYLIST_KEY, encrypt(url)).apply() }
-    fun playlistUrl(): String? = prefs.getString(PLAYLIST_KEY, null)?.let(::decryptText)
+    fun savePlaylistUrl(url: String) {
+        runCatching { encrypt(url) }.getOrNull()?.let { prefs.edit().putString(PLAYLIST_KEY, it).apply() }
+    }
+    fun playlistUrl(): String? = runCatching { prefs.getString(PLAYLIST_KEY, null)?.let(::decryptText) }.getOrNull()
 
     fun profiles(): List<XtreamProfile> = prefs.all.keys.filter { it.startsWith(PREFIX) }
         .mapNotNull { decrypt(it) }.sortedBy { it.name.lowercase() }

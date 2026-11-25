@@ -37,6 +37,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.WindowCompat
 import com.novatv.iptv.data.Channel
 import com.novatv.iptv.data.EpgProgram
 import com.novatv.iptv.data.M3uParser
@@ -56,7 +57,11 @@ private val Panel = Color(0xFF151925)
 private val Violet = Color(0xFF9B8CFF)
 
 class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); setContent { NovaApp() } }
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, true)
+        setContent { NovaApp() }
+    }
 }
 
 class NovaViewModel(private val context: Context) : ViewModel() {
@@ -71,7 +76,7 @@ class NovaViewModel(private val context: Context) : ViewModel() {
     var epg by mutableStateOf<List<EpgProgram>>(emptyList()); private set
     var xmltv by mutableStateOf<Map<String, List<EpgProgram>>>(emptyMap()); private set
     var catalog by mutableStateOf("live")
-    private var allItems = emptyList<Channel>()
+    private var catalogItems = emptyList<Channel>()
     private val profileStore = SecureProfileStore(context)
     var savedPlaylistUrl by mutableStateOf(profileStore.playlistUrl().orEmpty()); private set
     var savedProfiles by mutableStateOf(profileStore.profiles()); private set
@@ -85,7 +90,7 @@ class NovaViewModel(private val context: Context) : ViewModel() {
     fun load(text: String): Boolean {
         val parsed = M3uParser.parse(text)
         if (parsed.isEmpty()) { error = "No encontramos canales. Comprueba que el archivo sea una lista M3U válida."; return false }
-        channels = parsed; allItems = parsed; catalog = "live"; selected = null; category = "Todos"; error = null
+        channels = parsed; catalogItems = parsed; catalog = "live"; selected = null; category = "Todos"; error = null
         return true
     }
     fun loadXmlTv(text: String) {
@@ -114,7 +119,7 @@ class NovaViewModel(private val context: Context) : ViewModel() {
                     profileStore.save(profile)
                     savedProfiles = profileStore.profiles()
                     activeProfileName = profile.name
-                    allItems = lists; channels = lists; catalog = "live"; category = "Todos"
+                    catalogItems = lists; channels = lists; catalog = "live"; category = "Todos"
                 }
             } catch (e: Exception) { error = "No se pudo conectar con el proveedor: ${e.message ?: "error de conexión"}" }
             finally { loading = false }
@@ -127,12 +132,12 @@ class NovaViewModel(private val context: Context) : ViewModel() {
             try {
                 val episodes = withContext(Dispatchers.IO) { XtreamClient(profile.server, profile.username, profile.password).episodes(series.sourceId ?: return@withContext emptyList()) }
                 if (episodes.isEmpty()) error = "No hay episodios disponibles para esta serie."
-                else { allItems = episodes; channels = episodes; catalog = "episode"; category = "Todos" }
+                else { channels = episodes; catalog = "episode"; category = "Todos" }
             } catch (e: Exception) { error = "No se pudieron cargar los episodios: ${e.message ?: "error"}" }
             finally { loading = false }
         }
     }
-    fun selectCatalog(kind: String) { catalog = kind; channels = if (kind == "live") allItems.filter { it.kind == "live" } else allItems.filter { it.kind == kind }; category = "Todos" }
+    fun selectCatalog(kind: String) { catalog = kind; channels = catalogItems.filter { it.kind == kind }; category = "Todos" }
     fun loadUrl(url: String) {
         if (!url.startsWith("https://", true) && !url.startsWith("http://", true)) { error = "Introduce una URL HTTP o HTTPS válida."; return }
         viewModelScope.launch {
@@ -188,7 +193,7 @@ class NovaViewModel(private val context: Context) : ViewModel() {
     }
     MaterialTheme(colorScheme = darkColorScheme(background = Ink, surface = Panel, primary = Violet, onBackground = Color.White, onSurface = Color.White)) {
         Surface(Modifier.fillMaxSize(), color = Ink) {
-            Column(Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
+            Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).imePadding().padding(horizontal = 20.dp)) {
                 Column(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 12.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(42.dp).background(Violet, RoundedCornerShape(14.dp)), Alignment.Center) { Icon(Icons.Default.PlayArrow, null, tint = Ink) }

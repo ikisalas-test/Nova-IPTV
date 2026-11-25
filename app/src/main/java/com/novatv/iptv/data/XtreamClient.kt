@@ -13,6 +13,17 @@ class XtreamClient(server: String, private val username: String, private val pas
 
     fun list(kind: String): List<Channel> {
         val action = when (kind) { "movies" -> "get_vod_streams"; "series" -> "get_series"; else -> "get_live_streams" }
+        val categoryAction = when (kind) { "movies" -> "get_vod_categories"; "series" -> "get_series_categories"; else -> "get_live_categories" }
+        val categories = (request(categoryAction) as? JSONArray)?.let { rows ->
+            buildMap {
+                for (i in 0 until rows.length()) {
+                    val row = rows.optJSONObject(i) ?: continue
+                    val id = row.optString("category_id").takeIf { it != "null" }.orEmpty()
+                    val name = row.optString("category_name", row.optString("name"))
+                    if (id.isNotBlank() && name.isNotBlank()) put(id, name)
+                }
+            }
+        }.orEmpty()
         val rows = request(action) as? JSONArray ?: return emptyList()
         return buildList {
             for (i in 0 until rows.length()) {
@@ -20,7 +31,8 @@ class XtreamClient(server: String, private val username: String, private val pas
                 val id = row.optString(if (kind == "series") "series_id" else if (kind == "movies") "stream_id" else "stream_id")
                 if (id.isBlank() || id == "null") continue
                 val title = row.optString(if (kind == "series") "name" else "name", "Sin título")
-                val group = row.optString("category_name").ifBlank { "Sin categoría" }
+                val categoryId = row.optString("category_id").takeIf { it != "null" }.orEmpty()
+                val group = row.optString("category_name").ifBlank { categories[categoryId] ?: "Sin categoría" }
                 val ext = row.optString("container_extension").ifBlank { "mp4" }
                 val path = when (kind) {
                     "movies" -> "movie/$username/$password/$id.$ext"
