@@ -4,6 +4,9 @@
     <string name="action_file">Archivo</string>
     <string name="action_xtream">Xtream</string>
     <string name="action_epg">EPG</string>
+    <string name="add_source">Añadir lista</string>
+    <string name="add_another_playlist">Añadir otra lista</string>
+    <string name="add_source_description">Importa otra lista M3U, conecta un proveedor Xtream o carga una guía EPG.</string>
     <string name="back_to_channels">Volver a canales</string>
     <string name="guide_title">Guía de programación</string>
     <string name="home_empty_title">Empieza con tu lista</string>

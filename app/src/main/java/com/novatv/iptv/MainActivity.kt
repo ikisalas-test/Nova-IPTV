@@ -79,6 +79,7 @@ class NovaViewModel(private val context: Context) : ViewModel() {
     var selected by mutableStateOf<Channel?>(null); private set
     var error by mutableStateOf<String?>(null); private set
     var loading by mutableStateOf(false); private set
+    var showSources by mutableStateOf(true); private set
     var category by mutableStateOf(ALL_CATEGORIES)
     var favoritesOnly by mutableStateOf(false)
     var favorites by mutableStateOf<Set<String>>(emptySet()); private set
@@ -100,7 +101,9 @@ class NovaViewModel(private val context: Context) : ViewModel() {
     fun load(text: String): Boolean {
         val parsed = M3uParser.parse(text, context.getString(R.string.uncategorized), context.getString(R.string.channel_untitled))
         if (parsed.isEmpty()) { error = context.getString(R.string.error_invalid_m3u); return false }
-        channels = parsed; catalogItems = parsed; catalog = "live"; selected = null; category = ALL_CATEGORIES; error = null
+        catalogItems = (catalogItems + parsed).distinctBy { it.url }
+        channels = catalogItems.filter { it.kind == "live" }
+        catalog = "live"; selected = null; category = ALL_CATEGORIES; error = null; showSources = false
         return true
     }
     fun loadXmlTv(text: String) {
@@ -111,6 +114,7 @@ class NovaViewModel(private val context: Context) : ViewModel() {
         } catch (e: Exception) { error = context.getString(R.string.error_parse_epg, e.message ?: context.getString(R.string.error_invalid_xml)) }
     }
     fun reportError(message: String) { error = message }
+    fun addSource() { showSources = true }
     fun deleteProfile(name: String) {
         profileStore.delete(name); savedProfiles = profileStore.profiles()
         if (activeProfileName == name) activeProfileName = null
@@ -129,7 +133,9 @@ class NovaViewModel(private val context: Context) : ViewModel() {
                     profileStore.save(profile)
                     savedProfiles = profileStore.profiles()
                     activeProfileName = profile.name
-                    catalogItems = lists; channels = lists; catalog = "live"; category = ALL_CATEGORIES
+                    catalogItems = (catalogItems + lists).distinctBy { it.url }
+                    channels = catalogItems.filter { it.kind == "live" }
+                    catalog = "live"; category = ALL_CATEGORIES; selected = null; showSources = false
                 }
             } catch (e: Exception) { error = context.getString(R.string.error_connect_provider, e.message ?: context.getString(R.string.error_connection)) }
             finally { loading = false }
@@ -233,10 +239,16 @@ class NovaViewModel(private val context: Context) : ViewModel() {
                         Box(Modifier.size(34.dp).background(Violet, RoundedCornerShape(11.dp)), Alignment.Center) { Icon(Icons.Default.PlayArrow, null, tint = Ink) }
                         Text("NOVA", fontWeight = FontWeight.Black, color = Color.White, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(start = 6.dp))
                         Spacer(Modifier.weight(1f))
-                        TextButton(onClick = { showPlaylistDialog = true }) { Text(stringResource(R.string.edit_playlist)) }
-                        TextButton(onClick = { picker.launch(arrayOf("*/*")) }) { Text(stringResource(R.string.action_file)) }
-                        TextButton(onClick = { showXtream = true }) { Text(stringResource(R.string.action_xtream)) }
-                        TextButton(onClick = { epgPicker.launch(arrayOf("application/xml", "text/xml", "text/*", "application/octet-stream")) }) { Text(stringResource(R.string.action_epg)) }
+                        if (vm.showSources) {
+                            TextButton(onClick = { showPlaylistDialog = true }) { Text(stringResource(R.string.edit_playlist)) }
+                            TextButton(onClick = { picker.launch(arrayOf("*/*")) }) { Text(stringResource(R.string.action_file)) }
+                            TextButton(onClick = { showXtream = true }) { Text(stringResource(R.string.action_xtream)) }
+                            TextButton(onClick = { epgPicker.launch(arrayOf("application/xml", "text/xml", "text/*", "application/octet-stream")) }) { Text(stringResource(R.string.action_epg)) }
+                        } else {
+                            IconButton(onClick = vm::addSource) {
+                                Icon(Icons.Default.Add, stringResource(R.string.add_source), tint = Violet)
+                            }
+                        }
                     }
                 } else Column(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 12.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -248,12 +260,16 @@ class NovaViewModel(private val context: Context) : ViewModel() {
                         }
                     }
                     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        FilledTonalButton(onClick = { picker.launch(arrayOf("*/*")) }) { Icon(Icons.Default.Add, null); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.action_file)) }
-                        OutlinedButton(onClick = { showXtream = true }) { Text(stringResource(R.string.action_xtream)) }
-                        OutlinedButton(onClick = { epgPicker.launch(arrayOf("application/xml", "text/xml", "text/*", "application/octet-stream")) }) { Text(stringResource(R.string.action_epg)) }
+                        if (vm.showSources) {
+                            FilledTonalButton(onClick = { picker.launch(arrayOf("*/*")) }) { Icon(Icons.Default.Add, null); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.action_file)) }
+                            OutlinedButton(onClick = { showXtream = true }) { Text(stringResource(R.string.action_xtream)) }
+                            OutlinedButton(onClick = { epgPicker.launch(arrayOf("application/xml", "text/xml", "text/*", "application/octet-stream")) }) { Text(stringResource(R.string.action_epg)) }
+                        } else {
+                            FilledTonalButton(onClick = vm::addSource) { Icon(Icons.Default.Add, null); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.add_source)) }
+                        }
                     }
                 }
-                if (landscape && vm.channels.isNotEmpty()) {
+                if (!vm.showSources && landscape && vm.channels.isNotEmpty()) {
                     Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                         LandscapeChannelPane(vm, searchQuery, { searchQuery = it }, Modifier.weight(0.42f).fillMaxHeight())
                         Column(Modifier.weight(0.58f).fillMaxHeight()) {
@@ -279,7 +295,7 @@ class NovaViewModel(private val context: Context) : ViewModel() {
                             }
                         }
                     }
-                } else if (vm.selected != null) {
+                } else if (!vm.showSources && vm.selected != null) {
                     TextButton(onClick = vm::stop) { Icon(Icons.Default.ArrowBack, null); Text(" ${stringResource(R.string.back_to_channels)}") }
                     Text(vm.selected!!.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 8.dp))
                     Player(vm.selected!!)
@@ -294,17 +310,15 @@ class NovaViewModel(private val context: Context) : ViewModel() {
                             }
                         } }
                     }
-                } else {
+                } else if (vm.showSources) {
                     Text(
-                        if (vm.channels.isEmpty()) stringResource(R.string.home_empty_title) else when (vm.catalog) {
-                            "movies" -> stringResource(R.string.catalog_movies)
-                            "series" -> stringResource(R.string.catalog_series)
-                            "episode" -> stringResource(R.string.catalog_episodes)
-                            else -> stringResource(R.string.catalog_live)
-                        },
+                        if (vm.channels.isEmpty()) stringResource(R.string.home_empty_title) else stringResource(R.string.add_another_playlist),
                         style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold,
                     )
-                    Text(if (vm.channels.isEmpty()) stringResource(R.string.home_empty_description) else stringResource(R.string.channel_count, vm.channels.size, vm.channels.map { it.group }.distinct().size), color = Color(0xFF9AA3B7), modifier = Modifier.padding(top = 5.dp, bottom = 18.dp))
+                    Text(
+                        if (vm.channels.isEmpty()) stringResource(R.string.home_empty_description) else stringResource(R.string.add_source_description),
+                        color = Color(0xFF9AA3B7), modifier = Modifier.padding(top = 5.dp, bottom = 18.dp),
+                    )
                     vm.error?.let { Text(it, color = Color(0xFFFF9B9B), modifier = Modifier.padding(bottom = 10.dp)) }
                     OutlinedTextField(
                         value = playlistUrl,
@@ -324,9 +338,20 @@ class NovaViewModel(private val context: Context) : ViewModel() {
                             Text(if (vm.loading) stringResource(R.string.loading) else stringResource(R.string.load_playlist))
                         }
                     }
-                    if (vm.channels.isEmpty()) {
-                        if (!landscape) EmptyState { picker.launch(arrayOf("*/*")) }
-                    } else {
+                    if (vm.channels.isEmpty() && !landscape) EmptyState { picker.launch(arrayOf("*/*")) }
+                } else {
+                    Text(
+                        if (vm.channels.isEmpty()) stringResource(R.string.home_empty_title) else when (vm.catalog) {
+                            "movies" -> stringResource(R.string.catalog_movies)
+                            "series" -> stringResource(R.string.catalog_series)
+                            "episode" -> stringResource(R.string.catalog_episodes)
+                            else -> stringResource(R.string.catalog_live)
+                        },
+                        style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold,
+                    )
+                    Text(if (vm.channels.isEmpty()) stringResource(R.string.home_empty_description) else stringResource(R.string.channel_count, vm.channels.size, vm.channels.map { it.group }.distinct().size), color = Color(0xFF9AA3B7), modifier = Modifier.padding(top = 5.dp, bottom = 18.dp))
+                    vm.error?.let { Text(it, color = Color(0xFFFF9B9B), modifier = Modifier.padding(bottom = 10.dp)) }
+                    if (vm.channels.isNotEmpty()) {
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(bottom = 8.dp)) {
                             listOf("live" to R.string.catalog_live, "movies" to R.string.catalog_movies, "series" to R.string.catalog_series).forEach { (key, label) ->
                                 FilterChip(selected = vm.catalog == key, onClick = { vm.selectCatalog(key) }, label = { Text(stringResource(label)) })
