@@ -36,11 +36,13 @@ import com.novatv.iptv.data.M3uParser
 import com.novatv.iptv.data.SecureProfileStore
 import com.novatv.iptv.data.XtreamClient
 import com.novatv.iptv.data.XtreamProfile
+import com.novatv.iptv.data.EpgProgram
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 
 private val Ink = Color(0xFF090B12)
 private val Panel = Color(0xFF151925)
@@ -59,6 +61,7 @@ class NovaViewModel(private val context: Context) : ViewModel() {
     var favoritesOnly by mutableStateOf(false)
     var favorites by mutableStateOf<Set<String>>(emptySet()); private set
     var history by mutableStateOf<List<String>>(emptyList()); private set
+    var epg by mutableStateOf<List<EpgProgram>>(emptyList()); private set
     var catalog by mutableStateOf("live")
     private var allItems = emptyList<Channel>()
     private val profileStore = SecureProfileStore(context)
@@ -121,15 +124,23 @@ class NovaViewModel(private val context: Context) : ViewModel() {
     }
     fun play(channel: Channel) {
         selected = channel
+        epg = emptyList()
+        if (channel.kind == "live" && channel.sourceId != null) {
+            profileStore.load()?.let { profile -> viewModelScope.launch {
+                epg = withContext(Dispatchers.IO) { XtreamClient(profile.server, profile.username, profile.password).epg(channel.sourceId) }
+            } }
+        }
         history = (listOf(channel.name) + history.filterNot { it == channel.name }).take(30)
         prefs.edit().putString("history", history.joinToString("\n")).apply()
     }
     fun toggleFavorite(channel: Channel) {
-        favorites = if (channel.url in favorites) favorites - channel.url else favorites + channel.url
+        val key = favoriteKey(channel)
+        favorites = if (key in favorites) favorites - key else favorites + key
         prefs.edit().putStringSet("favorites", favorites).apply()
     }
     fun stop() { selected = null }
-    fun visibleChannels(): List<Channel> = channels.filter { (!favoritesOnly || it.url in favorites) && (category == "Todos" || it.group == category) }
+    fun favoriteKey(channel: Channel): String = MessageDigest.getInstance("SHA-256").digest(channel.url.toByteArray()).joinToString("") { "%02x".format(it) }
+    fun visibleChannels(): List<Channel> = channels.filter { (!favoritesOnly || favoriteKey(it) in favorites) && (category == "Todos" || it.group == category) }
 }
 
 @Composable private fun NovaApp() {
@@ -155,6 +166,15 @@ class NovaViewModel(private val context: Context) : ViewModel() {
                     TextButton(onClick = vm::stop) { Icon(Icons.Default.ArrowBack, null); Text(" Volver a canales") }
                     Text(vm.selected!!.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 8.dp))
                     Player(vm.selected!!)
+                    if (vm.epg.isNotEmpty()) {
+                        Text("Guía de programación", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 14.dp, bottom = 6.dp))
+                        LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) { items(vm.epg) { item ->
+                            Row(Modifier.fillMaxWidth().background(Panel, RoundedCornerShape(12.dp)).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(item.start.takeLast(5), color = Violet, fontWeight = FontWeight.Bold, modifier = Modifier.width(58.dp))
+                                Column { Text(item.title, fontWeight = FontWeight.SemiBold); if (item.description.isNotBlank()) Text(item.description, color = Color(0xFF9AA3B7), style = MaterialTheme.typography.bodySmall, maxLines = 2) }
+                            }
+                        } }
+                    }
                 } else {
                     Text(if (vm.channels.isEmpty()) "Empieza con tu lista" else when (vm.catalog) { "movies" -> "Películas"; "series" -> "Series"; "episode" -> "Episodios"; else -> "TV en directo" }, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                     Text(if (vm.channels.isEmpty()) "Nova no incluye canales. Importa tu propio archivo M3U o M3U8." else "${vm.channels.size} canales · ${vm.channels.map { it.group }.distinct().size} categorías", color = Color(0xFF9AA3B7), modifier = Modifier.padding(top = 5.dp, bottom = 18.dp))
@@ -176,7 +196,7 @@ class NovaViewModel(private val context: Context) : ViewModel() {
                         }
                         if (vm.history.isNotEmpty()) Text("Recientes: ${vm.history.take(5).joinToString(" · ")}", color = Color(0xFF9AA3B7), style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 8.dp))
                         val filtered = vm.visibleChannels().filter { it.name.contains(query, true) || it.group.contains(query, true) }
-                        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) { items(filtered, key = { it.sourceId ?: it.url }) { channel -> ChannelRow(channel, channel.url in vm.favorites, { if (channel.kind == "series") vm.loadEpisodes(channel) else vm.play(channel) }, { if (channel.url.isNotBlank()) vm.toggleFavorite(channel) }) } }
+                        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) { items(filtered, key = { it.sourceId ?: it.url }) { channel -> ChannelRow(channel, vm.favoriteKey(channel) in vm.favorites, { if (channel.kind == "series") vm.loadEpisodes(channel) else vm.play(channel) }, { if (channel.url.isNotBlank()) vm.toggleFavorite(channel) }) } }
                     }
                     Spacer(Modifier.height(12.dp))
                     OutlinedTextField(playlistUrl, { playlistUrl = it }, Modifier.fillMaxWidth(), label = { Text("URL de lista M3U / M3U8") }, singleLine = true, trailingIcon = { TextButton(enabled = !vm.loading, onClick = { vm.loadUrl(playlistUrl.trim()) }) { Text(if (vm.loading) "Cargando…" else "Cargar") } })

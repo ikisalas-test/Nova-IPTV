@@ -2,9 +2,12 @@ package com.novatv.iptv.data
 
 import org.json.JSONArray
 import org.json.JSONObject
+import android.util.Base64
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+
+data class EpgProgram(val title: String, val start: String, val end: String, val description: String)
 
 /** Small synchronous client; call it from Dispatchers.IO. */
 class XtreamClient(server: String, private val username: String, private val password: String) {
@@ -47,6 +50,20 @@ class XtreamClient(server: String, private val username: String, private val pas
                     val title = row.optString("title", "Episodio ${i + 1}")
                     add(Channel("T$season · $title", "$base/series/$username/$password/$id.$ext", "Temporada $season", kind = "episode", sourceId = id))
                 }
+            }
+        }
+    }
+
+    fun epg(streamId: String, limit: Int = 12): List<EpgProgram> {
+        val response = request("get_short_epg", "stream_id" to streamId, "limit" to limit.toString()) as? JSONObject ?: return emptyList()
+        val rows = response.optJSONArray("epg_listings") ?: return emptyList()
+        return buildList {
+            for (i in 0 until rows.length()) {
+                val row = rows.optJSONObject(i) ?: continue
+                fun decoded(key: String): String = runCatching {
+                    String(Base64.decode(row.optString(key), Base64.DEFAULT), Charsets.UTF_8)
+                }.getOrDefault(row.optString(key))
+                add(EpgProgram(decoded("title"), row.optString("start"), row.optString("end"), decoded("description")))
             }
         }
     }
